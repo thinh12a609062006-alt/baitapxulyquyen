@@ -1,9 +1,16 @@
 package com.example.baitapxulyquyen
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,6 +28,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -34,11 +42,6 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.launch
-import org.osmdroid.config.Configuration
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
-import org.osmdroid.util.GeoPoint
-import org.osmdroid.views.MapView
-import org.osmdroid.views.overlay.Marker
 
 
 sealed interface LocationUiState {
@@ -48,11 +51,26 @@ sealed interface LocationUiState {
     data class Error(val message: String) : LocationUiState
 }
 
-/**
- * Cách dùng: gọi 1 lần trong màn hình có nút Allow.
- * Trả về 1 hàm; gọi hàm đó (khi nhấn Allow) thì bắt đầu xin quyền.
- * onDone: được gọi khi chức năng này kết thúc (đã đóng bản đồ / thông báo lỗi).
- */
+fun openInGoogleMaps(context: Context, lat: Double, lng: Double) {
+    val label = Uri.encode("Bạn đang ở đây")
+    val geoUri = Uri.parse("geo:$lat,$lng?q=$lat,$lng($label)")
+    val appIntent = Intent(Intent.ACTION_VIEW, geoUri).setPackage("com.google.android.apps.maps")
+    try {
+        context.startActivity(appIntent)
+    } catch (e: Exception) {
+        val webIntent = Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse("https://www.google.com/maps/search/?api=1&query=$lat,$lng")
+        )
+        try {
+            context.startActivity(webIntent)
+        } catch (e2: Exception) {
+            Toast.makeText(context, "Không mở được Google Maps", Toast.LENGTH_SHORT).show()
+        }
+    }
+}
+
+@SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun rememberLocationPermissionRequester(onDone: () -> Unit = {}): () -> Unit {
     val context = LocalContext.current
@@ -64,6 +82,7 @@ fun rememberLocationPermissionRequester(onDone: () -> Unit = {}): () -> Unit {
         state = LocationUiState.Idle
         currentOnDone()
     }
+
     fun fetchLocation() {
         state = LocationUiState.Loading
         scope.launch {
@@ -105,7 +124,10 @@ fun rememberLocationPermissionRequester(onDone: () -> Unit = {}): () -> Unit {
         )
 
         is LocationUiState.Success -> {
-            val point = GeoPoint(s.info.latitude, s.info.longitude)
+            val lat = s.info.latitude
+            val lng = s.info.longitude
+            // Địa chỉ trang Google Maps nhúng (không cần API key), ghim đúng tọa độ
+            val mapUrl = "https://maps.google.com/maps?q=$lat,$lng&z=17&hl=vi&output=embed"
 
             Dialog(
                 onDismissRequest = { closeAndFinish() },
@@ -117,30 +139,16 @@ fun rememberLocationPermissionRequester(onDone: () -> Unit = {}): () -> Unit {
                         AndroidView(
                             modifier = Modifier.fillMaxSize(),
                             factory = { ctx ->
-                                Configuration.getInstance().load(
-                                    ctx,
-                                    ctx.getSharedPreferences("osmdroid", Context.MODE_PRIVATE)
-                                )
-                                Configuration.getInstance().userAgentValue =
-                                    "BaiTapXuLyQuyen/1.0 (student android app)"
-
-                                MapView(ctx).apply {
-                                    setTileSource(TileSourceFactory.MAPNIK)
-                                    setMultiTouchControls(true)
-                                    isTilesScaledToDpi = true
-                                    controller.setZoom(18.0)
-                                    controller.setCenter(point)
-
-                                    val marker = Marker(this)
-                                    marker.position = point
-                                    marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                                    marker.title = "Bạn đang ở đây"
-                                    overlays.add(marker)
-                                    marker.showInfoWindow()
+                                WebView(ctx).apply {
+                                    settings.javaScriptEnabled = true
+                                    settings.domStorageEnabled = true
+                                    webViewClient = WebViewClient()
+                                    loadUrl(mapUrl)
                                 }
                             },
-                            onRelease = { it.onDetach() }
+                            onRelease = { it.destroy() }
                         )
+
                         Card(
                             modifier = Modifier
                                 .align(Alignment.TopCenter)
@@ -158,19 +166,24 @@ fun rememberLocationPermissionRequester(onDone: () -> Unit = {}): () -> Unit {
                                     Text("Bạn đang ở đây", fontWeight = FontWeight.Bold)
                                 }
                                 Spacer(Modifier.height(8.dp))
-                                Text("Vĩ độ: ${s.info.latitude}")
-                                Text("Kinh độ: ${s.info.longitude}")
+                                Text("Vĩ độ: $lat")
+                                Text("Kinh độ: $lng")
                                 Spacer(Modifier.height(4.dp))
                                 Text("Địa chỉ: ${s.info.address ?: "Không tìm thấy địa chỉ"}")
                             }
                         }
-                        Button(
-                            onClick = { closeAndFinish() },
+                        Row(
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
-                                .padding(bottom = 32.dp)
+                                .padding(bottom = 32.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            Text("Đóng")
+                            Button(onClick = { openInGoogleMaps(context, lat, lng) }) {
+                                Text("Mở Google Maps")
+                            }
+                            OutlinedButton(onClick = { closeAndFinish() }) {
+                                Text("Đóng")
+                            }
                         }
                     }
                 }
@@ -186,7 +199,6 @@ fun rememberLocationPermissionRequester(onDone: () -> Unit = {}): () -> Unit {
             text = { Text(s.message) }
         )
     }
-
     return {
         launcher.launch(
             arrayOf(
